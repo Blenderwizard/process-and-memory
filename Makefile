@@ -34,7 +34,7 @@ re: fclean
 
 patch_kernel:
 
-compile_kernel: patch_kernel
+compile_kernel: #patch_kernel
 	$(MAKE) -C $(KDIR) LLVM=1 -j 6
 
 mount_boot:

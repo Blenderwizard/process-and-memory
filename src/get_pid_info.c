@@ -13,42 +13,75 @@
 #include <linux/rcupdate.h>
 #include <linux/path.h>
 
-SYSCALL_DEFINE1(get_pid_info, int, pid) {
+struct pid_info {
+    int pid;
+    u32 state;
+    const void *stack;
+    u64 age;
+    // int * children;
+    int parent_pid;
+    char root_path[PATH_MAX];
+    char working_directory[PATH_MAX];
+};
+
+static long    __sys_get_pid_info(struct pid_info __user * p_info_struct, int pid) {
     struct task_struct *task;
-    char buf[PATH_MAX];
-    char *path;
+    char * path;
     struct timespec64 current_time;
+
+    struct pid_info *data = (struct pid_info *) kzalloc(sizeof(struct pid_info), GFP_KERNEL);
+    if (data == NULL) {
+        return -ENOMEM;
+    }
+
+    int error = copy_from_user(data, p_info_struct, sizeof(struct pid_info));
+    if (error) {
+        kfree(data);
+        return -EFAULT;
+    }
 
     rcu_read_lock();
     task = pid_task(find_vpid(pid), PIDTYPE_PID);
     if (task) {
-        pr_info("Process ID: %d\n", pid);
-        pr_info("Process Name: %s\n", task->comm);
-        pr_info("Process State: %x\n", task->__state);
-        pr_info("Stack address: %p\n", task->stack);
+        data->pid = pid;
+        data->state = task->__state;
+        data->stack = task->stack;
         ktime_get_boottime_ts64(&current_time);
-        u64 age_ms = (timespec64_to_ns(&current_time) - task->start_time) / 1000000;
-        pr_info("Process Age: %llu ms\n", age_ms);
-        pr_info("Children list address: %llu\n", task->children);
-        pr_info("Parent PID: %d\n", task->parent->pid);
+        data->age = (timespec64_to_ns(&current_time) - task->start_time);
+        if (task->parent) {
+            data->parent_pid = task->parent->pid;
+        } else {
+            data->parent_pid = 0;
+        }
         if (!task->fs) {
-            pr_info("No filesystem context found\n");
+            memset(data->root_path, 0, PATH_MAX);
+            memset(data->working_directory, 0, PATH_MAX);
             rcu_read_unlock();
             return 0;
         }
-        path = d_path(&task->fs->root, buf, PATH_MAX);
+        path = d_path(&task->fs->root, data->root_path, PATH_MAX);
         if (IS_ERR(path)) {
-            pr_info("Failed to resolve root path\n");
+            memset(data->root_path, 0, PATH_MAX);
         } else {
-            pr_info("Root Path: %s\n", path);
+            memcpy(data->root_path, path, PATH_MAX);
         }
-        path = d_path(&task->fs->pwd, buf, PATH_MAX);
+        path = d_path(&task->fs->pwd, data->working_directory, PATH_MAX);
         if (IS_ERR(path)) {
-            pr_info("Failed to resolve PWD\n");
+            memset(data->working_directory, 0, PATH_MAX);
         } else {
-            pr_info("Current Working Directory: %s\n", path);
+            memcpy(data->working_directory, path, PATH_MAX);
         }
     }
     rcu_read_unlock();
+    error = copy_to_user(p_info_struct, data, sizeof(struct pid_info));
+    if (error) {
+        kfree(data);
+        return -EFAULT;
+    }
+    kfree(data);
     return 0;
+}
+
+SYSCALL_DEFINE2(get_pid_info, struct pid_info __user *, p_info_struct, int, pid) {
+    return __sys_get_pid_info(p_info_struct, pid);
 }
