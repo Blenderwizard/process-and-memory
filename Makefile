@@ -32,13 +32,20 @@ fclean: clean
 re: fclean
 	@$(MAKE) -C $$PWD
 
-patch_kernel:
+patch_kernel: patch.diff
+	git -C $(KDIR) apply $$PWD/patch.diff
+	touch patch_kernel
 
-compile_kernel: #patch_kernel
-	$(MAKE) -C $(KDIR) LLVM=1 -j 6
+restore_kernel: patch_kernel
+	git -C $(KDIR) checkout .
+	rm -rf $(KDIR)/kernel/get_pid_info
+	rm -rf patch_kernel
 
 mount_boot:
 	mount /dev/vda1
+
+compile_kernel: patch_kernel
+	$(MAKE) -C $(KDIR) LLVM=1 -j 6
 
 install_kernel: mount_boot compile_kernel
 	$(MAKE) -C $(KDIR) LLVM=1 modules_install
@@ -50,4 +57,4 @@ install_kernel: mount_boot compile_kernel
 install: install_kernel
 	reboot
 
-.PHONY: install compile_kernel install_kernel patch_kernel mount_boot
+.PHONY: install compile_kernel install_kernel mount_boot restore_kernel
